@@ -113,39 +113,45 @@ lunot=51
 !----------------------------------------------------------
 
 call openbf(lunot,'OUT',lunin(1))
-do i=1,nheaders
-   ksum=0 ! msg count for each type of header
-   do j=1,nfiles
-      m=0
-      print'(" writing",I4," messages of ",A," to unit",I3," for file",I3)', &
-       msgs(i,j),cheaders(i),lunot,j
-      if(msgs(i,j).gt.0) then
-         do while(ireadmg(lunin(j),subset,idate).eq.0)
-            if(m.le.msgs(i,j)) then
-               m=m+1
-               do while ( subset.ne.cheaders(i))
-                  print'(" mismatch ",A," .ne. ",A)', subset,cheaders(i)
-                  if(ireadmg(lunin(j),subset,idate).ne.0) then
-                     print'(" terminating file",I3)', j
-                     exit
-                  endif
-               enddo
-!!!!!!!!!!!!!!!print'(" copy file ",I0," ",A,1X,I," of total ",I0)', &
-!!!!!!!!!!!!!!! j,subset,m,msgs(i,j)
-               call closmg(lunot)
-               call copymg(lunin(j),lunot)
-               ksum(i)=ksum(i)+1
-            endif
-            if(m.eq.msgs(i,j)) exit
-         enddo
-      endif
-!!!!!!print'(1X,A," finished with file ",I0)', cheaders(i),j
-   enddo
-   print'(1X,A," wrote a total of ",I4," messages - expecting to write",I4,&
-    " messages")', cheaders(i),ksum(i),msum(i)
-   print'(1X)'
-enddo
-call closbf(lunot)
+    do j=1,nfiles
+       m=0
+       print'(" writing",I4," messages of ",A," to unit",I3," for file",I3)', &
+        msgs(i,j),cheaders(i),lunot,j
+       if(msgs(i,j).gt.0) then
+          do while(ireadmg(lunin(j),subset,idate).eq.0)
+             if(m.lt.msgs(i,j)) then
+                m=m+1
+                do while ( subset.ne.cheaders(i))
+                   print'(" mismatch ",A," .ne. ",A)', subset,cheaders(i)
+                   if(ireadmg(lunin(j),subset,idate).ne.0) then
+                      print'(" terminating file",I3)', j
+                      print'(" ERROR: expected header ",A," in file ",I3)', &
+                       cheaders(i),j
+                      stop 99
+                   endif
+                enddo
+                call closmg(lunot)
+                call copymg(lunin(j),lunot)
+                ksum(i)=ksum(i)+1
+             else
+                print'(" ERROR: too many messages encountered for header ",A," in file ",I3)', &
+                 cheaders(i),j
+                stop 99
+             endif
+             if(m.eq.msgs(i,j)) exit
+          enddo
+       endif
+       if (ksum(i).ne.msum(i)) then
+          print'(" ERROR: wrote ",I4," messages of ",A,"; expected ",I4)', &
+               ksum(i),cheaders(i),msum(i)
+          stop 99
+       endif
+    enddo
+    print'(1X,A," wrote a total of ",I4," messages - expecting to write",I4, &
+     " messages")', cheaders(i),ksum(i),msum(i)
+    print'(1X)'
+ enddo
+ call closbf(lunot)
 
 do j=1,nfiles
    call closbf(lunin(j))

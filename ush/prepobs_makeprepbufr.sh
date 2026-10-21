@@ -2505,8 +2505,61 @@ set -x
 
    chmod 775 MERGE_MSGS
 
-#  In parallel environment, make monolithic PREPBUFR file by meriging the
-#   partial PREPBUFR files
+#  In parallel environment, validate that the worker summaries are consistent
+#   before the partial files are merged.  This catches message loss or reorder
+#   before the prepbufr is accepted for downstream QC/GSI processing.
+#  ----------------------------------------------------------------------
+      : > $DATA/prepda.hdrs.all
+      : > $DATA/uprairids.parallel
+      multi=0
+      while [ $multi -lt $NSPLIT ]; do
+         hfile=$DATA/multi$multi/prepda.hdrs
+         if [ ! -s $hfile ]; then
+            set +x
+            echo
+            echo "ERROR: Missing PREPDATA worker header summary for stream $multi"
+            echo "       Expected file: $hfile"
+            echo "ABNORMAL EXIT!!!!!!!!!!!"
+            echo
+            set -x
+            $DATA/err_exit
+            exit 55
+         fi
+         cat $hfile >> $DATA/prepda.hdrs.all
+         if [ -s $DATA/multi$multi/fort.91 ]; then
+            cat $DATA/multi$multi/fort.91 >> $DATA/uprairids.parallel
+         fi
+         multi=`expr $multi + 1`
+      done
+      awk '{count[$1]+=$2} END {for (h in count) print h, count[h]}' \
+         $DATA/prepda.hdrs.all | sort > $DATA/prepda.hdrs.aggregate
+      if [ ! -s $DATA/prepda.hdrs.aggregate ]; then
+         set +x
+         echo
+         echo "ERROR: PREPDATA worker header summary is empty; split/merge validation failed"
+         echo "ABNORMAL EXIT!!!!!!!!!!!"
+         echo
+         set -x
+         $DATA/err_exit
+         exit 55
+      fi
+      if [ -s $DATA/uprairids.parallel ]; then
+         sort -u $DATA/uprairids.parallel > $DATA/uprairids.parallel.unique
+         if [ ! -s $DATA/uprairids.parallel.unique ]; then
+            set +x
+            echo
+            echo "ERROR: UPRAIR worker ID summary is empty; sonde data may have been lost"
+            echo "ABNORMAL EXIT!!!!!!!!!!!"
+            echo
+            set -x
+            $DATA/err_exit
+            exit 55
+         fi
+      fi
+
+#  In the parallel environment, make monolithic PREPBUFR file by merging the
+#   partial PREPBUFR files.  Validate the child-worker totals against the merged
+#   total before accepting the resulting monolithic file.
 #  ----------------------------------------------------------------------
       $TIMEIT $DATA/MERGE_MSGS $NSPLIT $DATA multi prepda.hdrs prepda \
        prepda.${cycle}
@@ -2516,6 +2569,39 @@ set -x
 #  problem with merge script
          $DATA/err_exit
          exit 55  # for extra measure
+      fi
+
+      grep "| A[0-9]\{5,\} |" $PRPT | awk '{print $2}' | wc -l > $DATA/prepda.headers.list
+      grep "| A[0-9]\{5,\} |" $PRPT | awk '{print $2}' >> $DATA/prepda.headers.list
+      export FORT11=prepda.${cycle}
+      export FORT51=prepda.reorder
+      export FORT52=prepda.hdrs.merged
+      $TIMEIT $LISTHDX < $DATA/prepda.headers.list > $DATA/prepda.hdrs.merged.out 2>&1
+      err=$?
+      if [ "$err" -ne 0 ]; then
+         set +x
+         echo
+         echo "ERROR: LISTHEADERS failed while validating the merged PREPDATA output"
+         echo "ABNORMAL EXIT!!!!!!!!!!!"
+         echo
+         set -x
+         $DATA/err_exit
+         exit 55
+      fi
+      awk '{count[$1]+=$2} END {for (h in count) print h, count[h]}' \
+         prepda.hdrs.merged | sort > $DATA/prepda.hdrs.merged.aggregate
+      diff -u $DATA/prepda.hdrs.aggregate $DATA/prepda.hdrs.merged.aggregate > $DATA/prepda.hdrs.diff
+      if [ $? -ne 0 ]; then
+         set +x
+         echo
+         echo "ERROR: PREPDATA worker header totals do not match merged PREPBUFR totals"
+         echo "       Parallel split/merge validation failed before QC/GSI processing"
+         echo "       See $DATA/prepda.hdrs.diff for details"
+         echo "ABNORMAL EXIT!!!!!!!!!!!"
+         echo
+         set -x
+         $DATA/err_exit
+         exit 55
       fi
    else
 
